@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from sortpilot import CATEGORIES, Move, execute, plan, undo, contained
 from settings_store import load_settings, save_archive_settings, config_path
 from archive_discovery import Root, discover, propose, validate_roots
+from review_queue import choices, assign, remember, recall
 
 BG = "#F4F7FB"
 PANEL = "#FFFFFF"
@@ -33,6 +34,7 @@ class SortPilotApp(tk.Tk):
         self.source.set(preferences['source'])
         self.roots = [Root(**r) for r in preferences.get('roots', [])]
         self.unassigned = []
+        self.inventory = None
         self.destination.set(preferences['destination'])
         self.status = tk.StringVar(value="選擇來源與目的資料夾，開始掃描")
         self.items: list[Move] = []
@@ -110,6 +112,7 @@ class SortPilotApp(tk.Tk):
         self.category.pack(side="left", padx=10)
         self._button(editor, "套用到選取項目", self.change_category).pack(side="left")
         self._button(editor, "略過選取項目", self.skip_selected).pack(side="left", padx=8)
+        self._button(editor, "指定小分類…", self.review_selected).pack(side="left", padx=8)
         bottom = tk.Frame(main, bg=BG)
         bottom.pack(fill="x")
         tk.Label(bottom, textvariable=self.status, bg=BG, fg=MUTED, anchor="w",
@@ -225,8 +228,15 @@ class SortPilotApp(tk.Tk):
 
     def _archive_scanned(self, result):
         matches, undecided, inventory = result
+        self.inventory = inventory
         self.unassigned = undecided
-        self._show_plan(matches)
+        remembered = []
+        remaining = []
+        for filename in undecided:
+            result = recall(filename, self.roots)
+            (remembered if result else remaining).append(result if result else filename)
+        self.unassigned = remaining
+        self._show_plan(matches + remembered)
         self.status.set(f"索引 {inventory['folders_scanned']} 個資料夾，"
                         f"建議 {len(matches)} 個，待人工判斷 {len(undecided)} 個"
                         + ("；索引達上限" if inventory["truncated"] else ""))
@@ -241,7 +251,7 @@ class SortPilotApp(tk.Tk):
         for index, item in enumerate(self.items):
             self.tree.insert("", "end", iid=str(index),
                              values=(Path(item.source).name, item.category, item.target, item.reason))
-        self.count_label.configure(text=f"待整理檔案：{len(self.items)}")
+        self.count_label.configure(text=f"可確認：{len(self.items)} · 待指定：{len(self.unassigned)}")
 
     def _select_category(self, _event=None):
         selected = self.tree.selection()
@@ -250,7 +260,7 @@ class SortPilotApp(tk.Tk):
 
     def change_category(self):
         category = self.category.get()
-        if category not in (*CATEGORIES.keys(), "Other"):
+        if category not in [r.category for r in self.roots]:
             return
         matching = [root for root in self.roots if root.category == category]
         if len(matching) != 1:
@@ -263,6 +273,70 @@ class SortPilotApp(tk.Tk):
             item.reason = "manual category"
         self._refresh()
         self.status.set("已更新預覽，尚未移動檔案。")
+
+    def review_selected(self):
+        if self.busy or not self.inventory:
+            messagebox.showinfo("待確認", "請先掃描歸檔資料夾")
+            return
+        selected = [self.items[int(key)].source for key in self.tree.selection()]
+        filenames = selected or list(self.unassigned)
+        if not filenames:
+            messagebox.showinfo("待確認", "目前沒有需要指定的檔案")
+            return
+        options = choices(self.roots, self.inventory)
+        if not options:
+            messagebox.showwarning("待確認", "找不到可以使用的既有資料夾")
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("SortPilot · 人工分類審核")
+        dialog.geometry("840x530")
+        dialog.configure(bg=BG)
+        dialog.transient(self)
+        dialog.grab_set()
+        tk.Label(dialog, text="人工確認歸檔位置", font=(FONT, 18, "bold"), bg=BG, fg=TEXT).pack(
+            anchor="w", padx=20, pady=14)
+        tk.Label(dialog, text="選擇檔案，並從已存在的分類資料夾中指定目的地。可記住完整檔名規則。",
+                 bg=BG, fg=MUTED).pack(anchor="w", padx=20)
+        left = tk.Listbox(dialog, height=14, exportselection=False)
+        left.pack(fill="both", expand=True, padx=20, pady=12)
+        for file in filenames:
+            left.insert("end", Path(file).name)
+        right = tk.Frame(dialog, bg=BG)
+        right.pack(fill="x", padx=20)
+        folder_choice = ttk.Combobox(right, state="readonly", width=85,
+                                     values=[f"{category} → {folder}" for category, folder in options])
+        folder_choice.pack(side="left", fill="x", expand=True)
+        folder_choice.current(0)
+        keep_rule = tk.BooleanVar(value=True)
+        tk.Checkbutton(dialog, text="記住這個完整檔名的歸檔位置（下次仍需確認）",
+                       variable=keep_rule, bg=BG, fg=TEXT).pack(anchor="w", padx=20, pady=8)
+        def apply_choice():
+            selection = left.curselection()
+            if not selection:
+                messagebox.showwarning("待確認", "請先選擇一個檔案", parent=dialog)
+                return
+            original = filenames[selection[0]]
+            category, folder = options[folder_choice.current()]
+            try:
+                move = assign(original, category, folder, self.roots)
+                if keep_rule.get():
+                    remember(move, self.roots)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("指派失敗", str(exc), parent=dialog)
+                return
+            self.items = [item for item in self.items if item.source != original]
+            self.items.append(move)
+            self.unassigned = [item for item in self.unassigned if item != original]
+            self._refresh()
+            del filenames[selection[0]]
+            left.delete(selection[0])
+            self.status.set("已加入整理預覽，尚未搬移檔案。")
+            if not filenames:
+                dialog.destroy()
+        bar = tk.Frame(dialog, bg=BG)
+        bar.pack(fill="x", padx=20, pady=15)
+        self._button(bar, "套用到選取檔案", apply_choice, primary=True).pack(side="left")
+        self._button(bar, "完成", dialog.destroy).pack(side="right")
 
     def skip_selected(self):
         selected = {int(key) for key in self.tree.selection()}
