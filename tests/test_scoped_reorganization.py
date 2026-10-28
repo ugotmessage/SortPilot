@@ -15,7 +15,7 @@ class ScopedReorganizationTests(unittest.TestCase):
             (root / "報告-2026.pdf").write_text("x")
             result = propose_reorganization(root)
             self.assertEqual(len(result["moves"]), 1)
-            self.assertEqual(Path(result["moves"][0].target).parent, reports)
+            self.assertEqual(Path(result["moves"][0].target).parent.resolve(), reports.resolve())
             validate_scoped_moves(root, result["moves"])
             self.assertTrue((root / "報告-2026.pdf").exists())
 
