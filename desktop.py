@@ -394,7 +394,8 @@ class SortPilotApp(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         for index, item in enumerate(self.items):
             self.tree.insert("", "end", iid=str(index),
-                             values=(Path(item.source).name, item.category, item.target,\n                                     ", ".join(self.ai_metadata.get(item.source, {}).get("tags", [])), item.reason))
+                             values=(Path(item.source).name, item.category, item.target,
+                                     ", ".join(self.ai_metadata.get(item.source, {}).get("tags", [])), item.reason))
         self.count_label.configure(text=f"可確認：{len(self.items)} · 待指定：{len(self.unassigned)}")
 
     def _select_category(self, _event=None):
