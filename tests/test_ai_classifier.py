@@ -28,7 +28,7 @@ class AIClassifierTests(unittest.TestCase):
             return {"folder_id": folder["id"], "tags": ["work", "quarterly"], "reason": "report"}
         result = classify_inbox(self.source, self.roots, self.inventory, self.ai, "", fake)
         self.assertEqual(len(result["moves"]), 1)
-        self.assertEqual(result["metadata"][str(self.file)]["tags"], ["work", "quarterly"])
+        self.assertEqual(result["metadata"][str(self.file.resolve())]["tags"], ["work", "quarterly"])
         self.assertEqual(Path(result["moves"][0].target).parent.resolve(), (self.archive / "Reports").resolve())
         self.assertTrue(self.file.exists())
 
