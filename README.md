@@ -26,7 +26,15 @@ Local-first desktop file organizer for Windows and macOS.
 Open **設定 → AI 模型設定…** to choose `off`, `ollama`,
 `openai`, `compatible`, or `gemini`. Set an endpoint and model name;
 **測試連線／取得模型** queries the provider's model listing endpoint.
-The configured provider is **not yet used for file classification**.
+The configured provider **is now used for inbox file suggestions** when enabled.
+The model generates its own tags and selects only among previously indexed, existing
+approved archive directories. Each result remains a preview until manually confirmed.
+Text/Markdown/CSV/JSON and other supported plain-text snippets are read with a size
+limit. PDF extraction requires optional `pypdf` (`pip install pypdf`); without it,
+the filename is provided instead. Other formats currently use filename only.
+The first 100 source files are considered per scan. Cloud requests require an
+explicit confirmation dialog because snippets and directory names leave the device.
+Model failures leave files unassigned, never silently move them.
 
 Provider metadata is stored locally. API keys are only held in application
 memory during the current session, not written to settings files, and must be
