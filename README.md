@@ -21,6 +21,18 @@ Local-first desktop file organizer for Windows and macOS.
 - Neither mode autonomously creates, deletes or renames folders. Actual moves still need explicit confirmation.
 - Scoped mode's manual unresolved-file routing UI is not implemented yet.
 
+## AI settings (configuration milestone)
+
+Open **設定 → AI 模型設定…** to choose `off`, `ollama`,
+`openai`, `compatible`, or `gemini`. Set an endpoint and model name;
+**測試連線／取得模型** queries the provider's model listing endpoint.
+The configured provider is **not yet used for file classification**.
+
+Provider metadata is stored locally. API keys are only held in application
+memory during the current session, not written to settings files, and must be
+entered again after restart. Do not use untrusted custom endpoints; testing a
+connection sends the API key to the configured endpoint.
+
 ## Run
 
 ```sh
