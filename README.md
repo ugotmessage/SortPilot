@@ -2,7 +2,7 @@
 
 Local-first desktop file organizer for Windows and macOS.
 
-## Current development status (archive discovery prototype)
+## Current development status (archive discovery and scoped reorganization prototype)
 
 - **One inbox, many archive roots.** In the desktop **設定** dialog, select one source folder, then add multiple existing archive folders and assign each a major category.
 - A read-only bounded inventory discovers existing subfolders and samples filenames (not document contents) to suggest hierarchical destinations.
@@ -11,6 +11,15 @@ Local-first desktop file organizer for Windows and macOS.
 - One journal under SortPilot's local configuration directory supports undo across different archive roots.
 - No AI provider or PDF content analysis is connected yet. Existing-folder token matching is only a conservative prototype and can be wrong.
 - GitHub Actions runs tests on pushes and PRs; **building executable artifacts only happens with a manual workflow dispatch**.
+
+## Two operating modes
+
+- **Inbox mode**: one source folder, several approved archive roots; suggestions based on existing subfolder names.
+- **Locked-folder reorganization mode**: pick one existing folder. Scan its top-level and nested files, including previously organized documents. Suggest moves only between existing subfolders inside the locked root. Ties and no-match files remain unchanged.
+- Scoped mode validates all source and destination paths immediately before move confirmation; no proposed move is allowed outside the locked root. Symbolic links are not traversed.
+- **Tags are AI-owned metadata**, not operator-maintained taxonomy. Future AI will generate and normalize multiple tags per document; users only change the suggested destination. The tagging engine has **not** been implemented yet.
+- Neither mode autonomously creates, deletes or renames folders. Actual moves still need explicit confirmation.
+- Scoped mode's manual unresolved-file routing UI is not implemented yet.
 
 ## Run
 
