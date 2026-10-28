@@ -7,7 +7,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from sortpilot import CATEGORIES, Move, execute, plan, undo
+from sortpilot import CATEGORIES, Move, execute, plan, undo, contained
+from settings_store import load_settings, save_settings
 
 BG = "#F4F7FB"
 PANEL = "#FFFFFF"
@@ -27,6 +28,9 @@ class SortPilotApp(tk.Tk):
         self.configure(bg=BG)
         self.source = tk.StringVar()
         self.destination = tk.StringVar()
+        preferences = load_settings()
+        self.source.set(preferences['source'])
+        self.destination.set(preferences['destination'])
         self.status = tk.StringVar(value="選擇來源與目的資料夾，開始掃描")
         self.items: list[Move] = []
         self.queue: queue.Queue = queue.Queue()
@@ -48,10 +52,15 @@ class SortPilotApp(tk.Tk):
                  anchor="w").pack(fill="x", padx=22, pady=(30, 6))
         tk.Label(sidebar, text="智慧檔案整理工作台", font=(FONT, 10), fg="#A9BDD8", bg=NAV,
                  anchor="w").pack(fill="x", padx=24, pady=(0, 36))
-        for title in ["▣   整理檔案", "◷   整理紀錄", "⚙   設定"]:
-            tk.Label(sidebar, text=title, font=(FONT, 11, "bold"), fg="#DDE8F9",
-                     bg="#233B5F" if "整理檔案" in title else NAV,
-                     anchor="w", padx=20, pady=14).pack(fill="x", padx=9, pady=3)
+        for title, handler in [("▣   整理檔案", lambda: self.status.set("目前位於整理檔案頁面")),
+                               ("◷   整理紀錄", self.show_history),
+                               ("⚙   設定", self.show_settings)]:
+            tk.Button(sidebar, text=title, command=handler,
+                      font=(FONT, 11, "bold"), fg="#DDE8F9",
+                      bg="#233B5F" if "整理檔案" in title else NAV,
+                      activebackground="#344E73", activeforeground="white",
+                      cursor="hand2", relief="flat", anchor="w", padx=20, pady=14
+                      ).pack(fill="x", padx=9, pady=3)
         tk.Label(sidebar, text="本機處理 · 尚未啟用 AI\nMVP 0.2 · Windows / macOS",
                  bg=NAV, fg="#94A9C6", font=(FONT, 9), justify="left").pack(side="bottom", anchor="w",
                                                                              padx=22, pady=25)
@@ -103,6 +112,63 @@ class SortPilotApp(tk.Tk):
         tk.Label(bottom, textvariable=self.status, bg=BG, fg=MUTED, anchor="w",
                  font=(FONT, 10)).pack(side="left", fill="x", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._select_category)
+
+    def show_settings(self):
+        """Open working preferences dialog; no placeholder buttons."""
+        if self.busy:
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("SortPilot · 設定")
+        dialog.geometry("640x325")
+        dialog.minsize(540, 285)
+        dialog.configure(bg=BG)
+        dialog.transient(self)
+        dialog.grab_set()
+        tk.Label(dialog, text="設定", font=(FONT, 20, "bold"), bg=BG, fg=TEXT).pack(
+            anchor="w", padx=25, pady=(22, 4))
+        tk.Label(dialog, text="指定預設資料夾。設定只儲存在本機，不會上傳。",
+                 font=(FONT, 10), bg=BG, fg=MUTED).pack(anchor="w", padx=25, pady=(0, 15))
+        selected_source = tk.StringVar(value=self.source.get())
+        selected_destination = tk.StringVar(value=self.destination.get())
+        form = tk.Frame(dialog, bg=PANEL, padx=16, pady=12)
+        form.pack(fill="x", padx=25)
+        for title, variable in [("來源資料夾", selected_source), ("整理目的地", selected_destination)]:
+            line = tk.Frame(form, bg=PANEL)
+            line.pack(fill="x", pady=7)
+            tk.Label(line, text=title, width=11, bg=PANEL, fg=TEXT,
+                     anchor="w").pack(side="left")
+            ttk.Entry(line, textvariable=variable).pack(side="left", fill="x",
+                                                         expand=True, padx=7)
+            self._button(line, "瀏覽…", lambda v=variable: self._browse(v)).pack(side="right")
+
+        def save():
+            source, destination = selected_source.get().strip(), selected_destination.get().strip()
+            if source and destination:
+                a, b = Path(source).expanduser().resolve(), Path(destination).expanduser().resolve()
+                if contained(a, b) or contained(b, a):
+                    messagebox.showerror("設定無效", "來源和目的地不能相同或互相包含", parent=dialog)
+                    return
+            try:
+                save_settings(source, destination)
+            except OSError as exc:
+                messagebox.showerror("儲存失敗", str(exc), parent=dialog)
+                return
+            self.source.set(source)
+            self.destination.set(destination)
+            self.items = []
+            self._refresh()
+            self.status.set("設定已儲存。請重新掃描以產生最新整理預覽。")
+            dialog.destroy()
+
+        actions = tk.Frame(dialog, bg=BG)
+        actions.pack(fill="x", padx=25, pady=18)
+        self._button(actions, "取消", dialog.destroy).pack(side="right")
+        self._button(actions, "儲存設定", save, primary=True).pack(side="right", padx=8)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
+    def show_history(self):
+        """History is not ready: explain rather than render a dead navigation item."""
+        messagebox.showinfo("整理紀錄", "完整紀錄頁面尚在開發中；目前可使用「復原上次整理」。")
 
     def _browse(self, variable):
         path = filedialog.askdirectory(title="選擇資料夾")
