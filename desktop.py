@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from sortpilot import CATEGORIES, Move, execute, plan, undo, contained
 from settings_store import load_settings, save_archive_settings, save_ai_settings, config_path
 from ai_provider import DEFAULT_URLS, list_models, validate_ai
+from ai_classifier import classify_inbox
 from archive_discovery import Root, discover, propose, validate_roots
 from review_queue import choices, assign, remember, recall
 from scoped_reorganization import propose_reorganization, validate_scoped_moves
@@ -39,6 +40,7 @@ class SortPilotApp(tk.Tk):
         self.roots = [Root(**r) for r in preferences.get('roots', [])]
         self.unassigned = []
         self.inventory = None
+        self.ai_metadata = {}
         self.mode = tk.StringVar(value='inbox')
         self.scope = tk.StringVar()
         self.destination.set(preferences['destination'])
@@ -111,10 +113,10 @@ class SortPilotApp(tk.Tk):
         self.count_label.pack(anchor="w", pady=(5, 9))
         table_frame = tk.Frame(main, bg=PANEL)
         table_frame.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(table_frame, columns=("name", "category", "target", "reason"),
+        self.tree = ttk.Treeview(table_frame, columns=("name", "category", "target", "tags", "reason"),
                                  show="headings", selectmode="extended")
         for column, heading, width in [("name", "檔案名稱", 215), ("category", "分類", 115),
-                                       ("target", "預計目的地", 280), ("reason", "依據", 110)]:
+                                       ("target", "預計目的地", 250), ("tags", "AI 標籤", 170), ("reason", "依據", 110)]:
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=width, minwidth=70, stretch=column == "target")
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
@@ -310,6 +312,7 @@ class SortPilotApp(tk.Tk):
         self.items = []
         self.unassigned = []
         self.inventory = None
+        self.ai_metadata = {}
         if hasattr(self, "tree"):
             self._refresh()
 
@@ -337,8 +340,29 @@ class SortPilotApp(tk.Tk):
         self.status.set("正在掃描現有歸檔資料夾…")
         def task():
             inventory = discover(Path(self.source.get()), self.roots)
-            return (*propose(Path(self.source.get()), inventory), inventory)
-        self._run(task, self._archive_scanned)
+            if self.ai.get("provider", "off") != "off":
+                results = classify_inbox(Path(self.source.get()), self.roots, inventory,
+                                         self.ai.copy(), self.api_key)
+                return ("ai", results, inventory)
+            return ("rules", propose(Path(self.source.get()), inventory), inventory)
+        self._run(task, self._inbox_scanned)
+
+    def _inbox_scanned(self, result):
+        engine, payload, inventory = result
+        if engine == "ai":
+            self.inventory = inventory
+            self.ai_metadata = payload["metadata"]
+            self.unassigned = payload["undecided"]
+            self.items = payload["moves"]
+            self._refresh()
+            self.status.set(f"AI 建議 {len(self.items)} 個、待確認 {len(self.unassigned)} 個、"
+                            f"錯誤 {len(payload['failures'])} 個；尚未搬移檔案")
+            if payload["failures"]:
+                messagebox.showwarning("AI 分類部分失敗",
+                                       f"{len(payload['failures'])} 個檔案無法完成 AI 分類，已保留在待確認佇列。")
+        else:
+            matches, undecided = payload
+            self._archive_scanned((matches, undecided, inventory))
 
     def _archive_scanned(self, result):
         matches, undecided, inventory = result
@@ -364,7 +388,7 @@ class SortPilotApp(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         for index, item in enumerate(self.items):
             self.tree.insert("", "end", iid=str(index),
-                             values=(Path(item.source).name, item.category, item.target, item.reason))
+                             values=(Path(item.source).name, item.category, item.target,\n                                     ", ".join(self.ai_metadata.get(item.source, {}).get("tags", [])), item.reason))
         self.count_label.configure(text=f"可確認：{len(self.items)} · 待指定：{len(self.unassigned)}")
 
     def _select_category(self, _event=None):
