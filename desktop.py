@@ -8,7 +8,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from sortpilot import CATEGORIES, Move, execute, plan, undo, contained
-from settings_store import load_settings, save_archive_settings, config_path
+from settings_store import load_settings, save_archive_settings, save_ai_settings, config_path
+from ai_provider import DEFAULT_URLS, list_models, validate_ai
 from archive_discovery import Root, discover, propose, validate_roots
 from review_queue import choices, assign, remember, recall
 from scoped_reorganization import propose_reorganization, validate_scoped_moves
@@ -33,6 +34,8 @@ class SortPilotApp(tk.Tk):
         self.destination = tk.StringVar()
         preferences = load_settings()
         self.source.set(preferences['source'])
+        self.ai = dict(preferences['ai'])
+        self.api_key = ''
         self.roots = [Root(**r) for r in preferences.get('roots', [])]
         self.unassigned = []
         self.inventory = None
@@ -188,7 +191,76 @@ class SortPilotApp(tk.Tk):
         bar.pack(fill="x", padx=22, pady=16)
         self._button(bar, "新增歸檔位置", add).pack(side="left")
         self._button(bar, "移除選取", remove).pack(side="left", padx=8)
+        self._button(bar, "AI 模型設定…", self.show_ai_settings).pack(side="left", padx=8)
         self._button(bar, "儲存設定", save, primary=True).pack(side="right")
+
+    def show_ai_settings(self):
+        if self.busy:
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("SortPilot · AI 模型")
+        dialog.geometry("690x420")
+        dialog.configure(bg=BG)
+        dialog.transient(self)
+        dialog.grab_set()
+        tk.Label(dialog, text="AI 模型設定", font=(FONT, 19, "bold"), bg=BG, fg=TEXT).pack(anchor="w", padx=22, pady=(18, 7))
+        tk.Label(dialog, text="此頁可設定模型並檢查連線。目前分類仍使用本地規則，不會傳送文件。",
+                 bg=BG, fg=MUTED).pack(anchor="w", padx=22)
+        form = tk.Frame(dialog, bg=PANEL, padx=16, pady=12)
+        form.pack(fill="x", padx=22, pady=15)
+        provider = tk.StringVar(value=self.ai.get("provider", "off"))
+        url = tk.StringVar(value=self.ai.get("url", ""))
+        model = tk.StringVar(value=self.ai.get("model", ""))
+        secret = tk.StringVar(value=self.api_key)
+        status = tk.StringVar(value="尚未測試連線")
+        def field(name, widget):
+            row = tk.Frame(form, bg=PANEL)
+            row.pack(fill="x", pady=5)
+            tk.Label(row, text=name, width=13, anchor="w", bg=PANEL).pack(side="left")
+            widget(row).pack(side="left", fill="x", expand=True)
+        def change_provider(_event=None):
+            value = provider.get()
+            url.set(DEFAULT_URLS.get(value, ""))
+            model.set("")
+        field("模型服務", lambda row: ttk.Combobox(row, textvariable=provider, state="readonly",
+                                                     values=["off", "ollama", "openai", "compatible", "gemini"]))
+        field("API 位址", lambda row: ttk.Entry(row, textvariable=url))
+        field("模型名稱", lambda row: ttk.Entry(row, textvariable=model))
+        field("API Key（暫存）", lambda row: ttk.Entry(row, textvariable=secret, show="*"))
+        tk.Label(dialog, textvariable=status, bg=BG, fg=MUTED, wraplength=620).pack(anchor="w", padx=22)
+        def pick_models():
+            if provider.get() == "off":
+                status.set("AI 已關閉")
+                return
+            try:
+                validate_ai(provider.get(), url.get(), model.get() or "list")
+            except ValueError as exc:
+                status.set(str(exc))
+                return
+            status.set("正在讀取模型清單…")
+            def done(names):
+                if not names:
+                    status.set("連線成功，但沒有取得模型；可手動填寫名稱")
+                    return
+                model.set(names[0] if model.get() not in names else model.get())
+                status.set("連線成功；可用模型：" + ", ".join(names[:8]))
+            self._run(lambda: list_models(provider.get(), url.get(), secret.get()), done)
+        bar = tk.Frame(dialog, bg=BG)
+        bar.pack(fill="x", padx=22, pady=15)
+        self._button(bar, "測試連線／取得模型", pick_models).pack(side="left")
+        def save():
+            try:
+                validate_ai(provider.get(), url.get(), model.get())
+                save_ai_settings(provider.get(), url.get(), model.get())
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("設定錯誤", str(exc), parent=dialog)
+                return
+            self.ai = {"provider": provider.get(), "url": url.get(), "model": model.get()}
+            self.api_key = secret.get()
+            self.status.set("AI 模型偏好已儲存；分類引擎尚未啟用 AI")
+            dialog.destroy()
+        self._button(bar, "儲存 AI 設定", save, primary=True).pack(side="right")
+        provider.trace_add("write", lambda *_: change_provider())
 
     def show_history(self):
         """History is not ready: explain rather than render a dead navigation item."""
