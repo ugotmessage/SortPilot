@@ -11,6 +11,7 @@ from sortpilot import CATEGORIES, Move, execute, plan, undo, contained
 from settings_store import load_settings, save_archive_settings, config_path
 from archive_discovery import Root, discover, propose, validate_roots
 from review_queue import choices, assign, remember, recall
+from scoped_reorganization import propose_reorganization, validate_scoped_moves
 
 BG = "#F4F7FB"
 PANEL = "#FFFFFF"
@@ -35,6 +36,8 @@ class SortPilotApp(tk.Tk):
         self.roots = [Root(**r) for r in preferences.get('roots', [])]
         self.unassigned = []
         self.inventory = None
+        self.mode = tk.StringVar(value='inbox')
+        self.scope = tk.StringVar()
         self.destination.set(preferences['destination'])
         self.status = tk.StringVar(value="選擇來源與目的資料夾，開始掃描")
         self.items: list[Move] = []
@@ -74,6 +77,12 @@ class SortPilotApp(tk.Tk):
         tk.Label(main, text="整理檔案", font=(FONT, 22, "bold"), bg=BG, fg=TEXT).pack(anchor="w")
         tk.Label(main, text="先預覽分類結果，必要時修改目的地，再確認整理。", bg=BG, fg=MUTED,
                  font=(FONT, 10)).pack(anchor="w", pady=(4, 22))
+        modes = tk.Frame(main, bg=BG)
+        modes.pack(fill="x")
+        tk.Radiobutton(modes, text="收件匣整理", variable=self.mode, value="inbox",
+                       bg=BG, command=self._mode_changed).pack(side="left")
+        tk.Radiobutton(modes, text="鎖定資料夾重整", variable=self.mode, value="scoped",
+                       bg=BG, command=self._mode_changed).pack(side="left", padx=15)
         controls = tk.Frame(main, bg=PANEL, padx=20, pady=18)
         controls.pack(fill="x")
         for name, variable in [("來源資料夾", self.source)]:
@@ -83,6 +92,10 @@ class SortPilotApp(tk.Tk):
                      font=(FONT, 10, "bold")).pack(side="left")
             ttk.Entry(line, textvariable=variable).pack(side="left", fill="x", expand=True, padx=8)
             self._button(line, "瀏覽…", lambda v=variable: self._browse(v)).pack(side="left")
+        self.scope_row = tk.Frame(controls, bg=PANEL)
+        tk.Label(self.scope_row, text="鎖定資料夾", bg=PANEL, width=12).pack(side="left")
+        ttk.Entry(self.scope_row, textvariable=self.scope).pack(side="left", fill="x", expand=True)
+        self._button(self.scope_row, "瀏覽…", lambda: self._browse(self.scope)).pack(side="left")
         action = tk.Frame(main, bg=BG)
         action.pack(fill="x", pady=(17, 12))
         self.scan_button = self._button(action, "↻  掃描與預覽", self.scan, primary=True)
@@ -118,6 +131,7 @@ class SortPilotApp(tk.Tk):
         tk.Label(bottom, textvariable=self.status, bg=BG, fg=MUTED, anchor="w",
                  font=(FONT, 10)).pack(side="left", fill="x", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self._select_category)
+        self._mode_changed()
 
     def show_settings(self):
         if self.busy:
@@ -214,8 +228,36 @@ class SortPilotApp(tk.Tk):
             pass
         self.after(100, self._poll)
 
+    def _mode_changed(self):
+        if not hasattr(self, "scope_row"):
+            return
+        if self.mode.get() == "scoped":
+            self.scope_row.pack(fill="x", pady=6)
+        else:
+            self.scope_row.pack_forget()
+        self.items = []
+        self.unassigned = []
+        self.inventory = None
+        if hasattr(self, "tree"):
+            self._refresh()
+
+    def _scoped_scanned(self, result):
+        self.items = result["moves"]
+        self.unassigned = result["unresolved"]
+        self.inventory = None
+        self._refresh()
+        self.status.set(f"鎖定根目錄：{result['scope']}；搬移建議 {len(self.items)}；"
+                        f"原位保留 {result['unchanged']}；待判斷 {len(self.unassigned)}")
+
     def scan(self):
         if self.busy:
+            return
+        if self.mode.get() == "scoped":
+            if not self.scope.get().strip():
+                messagebox.showwarning("SortPilot", "請選擇鎖定資料夾")
+                return
+            self.status.set("正在掃描指定資料夾內所有檔案…")
+            self._run(lambda: propose_reorganization(Path(self.scope.get())), self._scoped_scanned)
             return
         if not self.source.get() or not self.roots:
             messagebox.showwarning("SortPilot", "請先在設定中新增來源和歸檔位置")
@@ -259,6 +301,9 @@ class SortPilotApp(tk.Tk):
             self.category.set(self.items[int(selected[0])].category)
 
     def change_category(self):
+        if self.mode.get() == "scoped":
+            messagebox.showinfo("鎖定模式", "此模式暫不支援改用其他根目錄。")
+            return
         category = self.category.get()
         if category not in [r.category for r in self.roots]:
             return
@@ -275,6 +320,9 @@ class SortPilotApp(tk.Tk):
         self.status.set("已更新預覽，尚未移動檔案。")
 
     def review_selected(self):
+        if self.mode.get() == "scoped":
+            messagebox.showinfo("鎖定模式", "人工指定子資料夾功能仍在開發，暫時僅有既有目錄建議。")
+            return
         if self.busy or not self.inventory:
             messagebox.showinfo("待確認", "請先掃描歸檔資料夾")
             return
@@ -350,6 +398,12 @@ class SortPilotApp(tk.Tk):
         if not messagebox.askyesno("確認搬移", f"確定移動 {len(self.items)} 個檔案嗎？\n此操作會修改磁碟內容。"):
             return
         moves = [Move(**vars(item)) for item in self.items]
+        if self.mode.get() == "scoped":
+            try:
+                validate_scoped_moves(Path(self.scope.get()), moves)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("鎖定範圍驗證失敗", str(exc))
+                return
         dest = config_path().parent / "journal"
         self.status.set("正在整理檔案…")
         self._run(lambda: execute(moves, dest), self._applied)
