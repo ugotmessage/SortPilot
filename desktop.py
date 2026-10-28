@@ -337,6 +337,12 @@ class SortPilotApp(tk.Tk):
         if not self.source.get() or not self.roots:
             messagebox.showwarning("SortPilot", "請先在設定中新增來源和歸檔位置")
             return
+        if self.ai.get("provider", "off") not in ("off", "ollama"):
+            if not messagebox.askyesno(
+                "雲端 AI 資料傳送確認",
+                "這次掃描會將檔名、支援格式的部分文件內容，以及目標資料夾名稱傳給已設定的 AI 服務。\\n"
+                "請確認已獲得傳送這些資料的授權。是否繼續？"):
+                return
         self.status.set("正在掃描現有歸檔資料夾…")
         def task():
             inventory = discover(Path(self.source.get()), self.roots)
