@@ -27,6 +27,7 @@ jobs:
         run: python -m py_compile desktop.py sortpilot.py
 
   build:
+    if: github.event_name == 'workflow_dispatch'
     needs: test
     strategy:
       fail-fast: false
