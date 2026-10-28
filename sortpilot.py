@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import uuid
 from dataclasses import asdict, dataclass
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -104,7 +105,7 @@ def unique_target(target: Path) -> Path:
 def execute(moves: list[Move], destination: Path) -> tuple[str, list[Move]]:
     batch = uuid.uuid4().hex
     performed = []
-    with db_connect(destination) as db:
+    with closing(db_connect(destination)) as db:
         for move in moves:
             src = Path(move.source)
             if src.is_symlink() or not src.is_file():
@@ -123,7 +124,7 @@ def execute(moves: list[Move], destination: Path) -> tuple[str, list[Move]]:
 
 
 def undo(destination: Path, batch: str | None = None) -> dict:
-    with db_connect(destination) as db:
+    with closing(db_connect(destination)) as db:
         if batch is None:
             latest = db.execute("SELECT batch FROM journal WHERE undone_at IS NULL ORDER BY moved_at DESC LIMIT 1").fetchone()
             if latest is None:
